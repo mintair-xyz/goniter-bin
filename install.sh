@@ -13,6 +13,31 @@ SERVICE_USER="vm"
 SERVICE_GROUP="vm"
 DOWNLOAD_URL="https://raw.githubusercontent.com/mintair-xyz/goniter-bin/main/goniter"
 
+# Systemd service file content
+SERVICE_FILE_CONTENT="[Unit]
+Description=Goniter - Docker monitoring service
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_GROUP
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/$BINARY_NAME
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=$SERVICE_NAME
+
+# Environment variables (customize as needed)
+Environment=PORT=40000
+# Environment=API_TOKEN=your_token_here
+
+[Install]
+WantedBy=multi-user.target"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,6 +55,13 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Function to create/update service file
+create_service_file() {
+    print_status "Creating/updating systemd service file..."
+    echo "$SERVICE_FILE_CONTENT" | sudo tee "/etc/systemd/system/$SERVICE_NAME.service" > /dev/null
+    sudo systemctl daemon-reload
 }
 
 # Check if running as root
@@ -74,6 +106,9 @@ if [[ -f "$INSTALL_DIR/$BINARY_NAME" ]]; then
     # Set ownership
     sudo chown "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR/$BINARY_NAME"
     
+    # Update service file
+    create_service_file
+    
     # Restart the service
     print_status "Restarting service..."
     sudo systemctl start "$SERVICE_NAME"
@@ -112,37 +147,8 @@ else
     sudo chown "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR"
     sudo chown "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR/$BINARY_NAME"
     
-    # Create systemd service file
-    print_status "Creating systemd service file..."
-    sudo tee "/etc/systemd/system/$SERVICE_NAME.service" > /dev/null << EOF
-[Unit]
-Description=Goniter - Docker monitoring service
-After=network.target docker.service
-Wants=docker.service
-
-[Service]
-Type=simple
-User=$SERVICE_USER
-Group=$SERVICE_GROUP
-WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/$BINARY_NAME
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=$SERVICE_NAME
-
-# Environment variables (customize as needed)
-Environment=PORT=42424
-# Environment=API_TOKEN=your_token_here
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Reload systemd daemon
-    print_status "Reloading systemd daemon..."
-    sudo systemctl daemon-reload
+    # Create service file
+    create_service_file
     
     # Enable the service
     print_status "Enabling $SERVICE_NAME service..."
