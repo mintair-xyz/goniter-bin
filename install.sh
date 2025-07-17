@@ -77,28 +77,55 @@ install_frp() {
         return 0
     fi
     
-    print_status "Installing FRP client..."
-    
     # Use FRP_ADDRESS environment variable
     if [[ -z "$FRP_ADDRESS" ]]; then
         print_error "FRP_ADDRESS environment variable not set"
         exit 1
     fi
     
-    # Create FRP directory
-    print_status "Creating FRP directory: $FRP_INSTALL_DIR"
-    sudo mkdir -p "$FRP_INSTALL_DIR"
-    
-    # Download and extract FRP
-    print_status "Downloading FRP from: $FRP_DOWNLOAD_URL"
-    cd /tmp
-    wget -O frp.tar.gz "$FRP_DOWNLOAD_URL"
-    tar -xzf frp.tar.gz
-    
-    # Copy frpc binary
-    FRP_EXTRACTED_DIR=$(tar -tzf frp.tar.gz | head -1 | cut -f1 -d"/")
-    sudo cp "$FRP_EXTRACTED_DIR/frpc" "$FRP_INSTALL_DIR/"
-    sudo chmod +x "$FRP_INSTALL_DIR/frpc"
+    # Check if FRP is already installed
+    if [[ -f "$FRP_INSTALL_DIR/$FRP_BINARY_NAME" ]]; then
+        print_status "FRP client already exists. Updating..."
+        
+        # Stop the FRP service if it's running
+        if sudo systemctl is-active --quiet "$FRP_SERVICE_NAME"; then
+            print_status "Stopping existing FRP service..."
+            sudo systemctl stop "$FRP_SERVICE_NAME"
+        fi
+        
+        # Backup existing binary
+        print_status "Backing up existing FRP binary..."
+        sudo cp "$FRP_INSTALL_DIR/$FRP_BINARY_NAME" "$FRP_INSTALL_DIR/${FRP_BINARY_NAME}.backup"
+        
+        # Download and extract FRP
+        print_status "Downloading updated FRP from: $FRP_DOWNLOAD_URL"
+        cd /tmp
+        wget -O frp.tar.gz "$FRP_DOWNLOAD_URL"
+        tar -xzf frp.tar.gz
+        
+        # Copy frpc binary
+        FRP_EXTRACTED_DIR=$(tar -tzf frp.tar.gz | head -1 | cut -f1 -d"/")
+        sudo cp "$FRP_EXTRACTED_DIR/frpc" "$FRP_INSTALL_DIR/"
+        sudo chmod +x "$FRP_INSTALL_DIR/frpc"
+        
+    else
+        print_status "Installing FRP client..."
+        
+        # Create FRP directory
+        print_status "Creating FRP directory: $FRP_INSTALL_DIR"
+        sudo mkdir -p "$FRP_INSTALL_DIR"
+        
+        # Download and extract FRP
+        print_status "Downloading FRP from: $FRP_DOWNLOAD_URL"
+        cd /tmp
+        wget -O frp.tar.gz "$FRP_DOWNLOAD_URL"
+        tar -xzf frp.tar.gz
+        
+        # Copy frpc binary
+        FRP_EXTRACTED_DIR=$(tar -tzf frp.tar.gz | head -1 | cut -f1 -d"/")
+        sudo cp "$FRP_EXTRACTED_DIR/frpc" "$FRP_INSTALL_DIR/"
+        sudo chmod +x "$FRP_INSTALL_DIR/frpc"
+    fi
     
     # Create FRP configuration
     print_status "Creating FRP configuration..."
@@ -120,8 +147,8 @@ EOF
     
     sudo mv /tmp/frpc.yaml "$FRP_INSTALL_DIR/"
     
-    # Create FRP systemd service
-    print_status "Creating FRP systemd service..."
+    # Create/update FRP systemd service
+    print_status "Creating/updating FRP systemd service..."
     cat > /tmp/frpc.service << EOF
 [Unit]
 Description=FRP Client
@@ -148,18 +175,43 @@ EOF
     # Set ownership
     sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" "$FRP_INSTALL_DIR"
     
-    # Enable and start FRP service
+    # Reload systemd and enable service
     sudo systemctl daemon-reload
     sudo systemctl enable "$FRP_SERVICE_NAME"
-    sudo systemctl start "$FRP_SERVICE_NAME"
     
-    # Check FRP service status
-    if sudo systemctl is-active --quiet "$FRP_SERVICE_NAME"; then
-        print_status "FRP client service is running successfully!"
-        print_status "Your machine is accessible at: http://148.113.142.124/$FRP_ADDRESS"
+    # Start or restart the service
+    if [[ -f "$FRP_INSTALL_DIR/${FRP_BINARY_NAME}.backup" ]]; then
+        # This is an update, restart the service
+        print_status "Restarting FRP service..."
+        sudo systemctl restart "$FRP_SERVICE_NAME"
+        
+        # Check if service started successfully
+        if sudo systemctl is-active --quiet "$FRP_SERVICE_NAME"; then
+            print_status "FRP client service updated and running successfully!"
+            print_status "Your machine is accessible at: http://148.113.142.124/$FRP_ADDRESS"
+            
+            # Clean up backup on successful restart
+            sudo rm -f "$FRP_INSTALL_DIR/${FRP_BINARY_NAME}.backup"
+        else
+            print_error "FRP service failed to start after update. Rolling back..."
+            sudo cp "$FRP_INSTALL_DIR/${FRP_BINARY_NAME}.backup" "$FRP_INSTALL_DIR/$FRP_BINARY_NAME"
+            sudo systemctl restart "$FRP_SERVICE_NAME"
+            print_error "Rolled back to previous FRP version. Check logs with: sudo journalctl -u $FRP_SERVICE_NAME -f"
+            exit 1
+        fi
     else
-        print_error "FRP client service failed to start. Check logs with: sudo journalctl -u $FRP_SERVICE_NAME -f"
-        exit 1
+        # This is a fresh install, start the service
+        print_status "Starting FRP service..."
+        sudo systemctl start "$FRP_SERVICE_NAME"
+        
+        # Check FRP service status
+        if sudo systemctl is-active --quiet "$FRP_SERVICE_NAME"; then
+            print_status "FRP client service is running successfully!"
+            print_status "Your machine is accessible at: http://148.113.142.124/$FRP_ADDRESS"
+        else
+            print_error "FRP client service failed to start. Check logs with: sudo journalctl -u $FRP_SERVICE_NAME -f"
+            exit 1
+        fi
     fi
     
     # Clean up
