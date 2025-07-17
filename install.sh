@@ -136,7 +136,7 @@ auth:
   token: "$FRP_TOKEN"
 
 proxies:
-  - name: "web-machine-1"
+  - name: "$FRP_ADDRESS"
     type: "http"
     localPort: 40000
     customDomains: 
