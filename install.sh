@@ -93,9 +93,12 @@ install_frp() {
             sudo systemctl stop "$FRP_SERVICE_NAME"
         fi
         
-        # Backup existing binary
-        print_status "Backing up existing FRP binary..."
+        # Backup existing binary and config
+        print_status "Backing up existing FRP binary and configuration..."
         sudo cp "$FRP_INSTALL_DIR/$FRP_BINARY_NAME" "$FRP_INSTALL_DIR/${FRP_BINARY_NAME}.backup"
+        if [[ -f "$FRP_INSTALL_DIR/frpc.yaml" ]]; then
+            sudo cp "$FRP_INSTALL_DIR/frpc.yaml" "$FRP_INSTALL_DIR/frpc.yaml.backup"
+        fi
         
         # Download and extract FRP
         print_status "Downloading updated FRP from: $FRP_DOWNLOAD_URL"
@@ -190,11 +193,15 @@ EOF
             print_status "FRP client service updated and running successfully!"
             print_status "Your machine is accessible at: http://148.113.142.124/$FRP_ADDRESS"
             
-            # Clean up backup on successful restart
+            # Clean up backups on successful restart
             sudo rm -f "$FRP_INSTALL_DIR/${FRP_BINARY_NAME}.backup"
+            sudo rm -f "$FRP_INSTALL_DIR/frpc.yaml.backup"
         else
             print_error "FRP service failed to start after update. Rolling back..."
             sudo cp "$FRP_INSTALL_DIR/${FRP_BINARY_NAME}.backup" "$FRP_INSTALL_DIR/$FRP_BINARY_NAME"
+            if [[ -f "$FRP_INSTALL_DIR/frpc.yaml.backup" ]]; then
+                sudo cp "$FRP_INSTALL_DIR/frpc.yaml.backup" "$FRP_INSTALL_DIR/frpc.yaml"
+            fi
             sudo systemctl restart "$FRP_SERVICE_NAME"
             print_error "Rolled back to previous FRP version. Check logs with: sudo journalctl -u $FRP_SERVICE_NAME -f"
             exit 1
