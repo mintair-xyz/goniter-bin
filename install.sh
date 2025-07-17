@@ -13,6 +13,12 @@ SERVICE_USER="vm"
 SERVICE_GROUP="vm"
 DOWNLOAD_URL="https://raw.githubusercontent.com/mintair-xyz/goniter-bin/main/goniter"
 
+# FRP Configuration
+FRP_INSTALL_DIR="/home/vm/frp"
+FRP_BINARY_NAME="frpc"
+FRP_SERVICE_NAME="frpc"
+FRP_DOWNLOAD_URL="https://github.com/fatedier/frp/releases/download/v0.63.0/frp_0.63.0_linux_amd64.tar.gz"
+
 # Systemd service file content
 SERVICE_FILE_CONTENT="[Unit]
 Description=Goniter - Docker monitoring service
@@ -33,6 +39,7 @@ SyslogIdentifier=$SERVICE_NAME
 
 # Environment variables (customize as needed)
 Environment=PORT=40000
+Environment=FRP_ADDRESS=$FRP_ADDRESS
 # Environment=API_TOKEN=your_token_here
 
 [Install]
@@ -62,6 +69,102 @@ create_service_file() {
     print_status "Creating/updating systemd service file..."
     echo "$SERVICE_FILE_CONTENT" | sudo tee "/etc/systemd/system/$SERVICE_NAME.service" > /dev/null
     sudo systemctl daemon-reload
+}
+
+# Function to install FRP client
+install_frp() {
+    if [[ -z "$FRP_TOKEN" ]]; then
+        return 0
+    fi
+    
+    print_status "Installing FRP client..."
+    
+    # Use FRP_ADDRESS environment variable
+    if [[ -z "$FRP_ADDRESS" ]]; then
+        print_error "FRP_ADDRESS environment variable not set"
+        exit 1
+    fi
+    
+    # Create FRP directory
+    print_status "Creating FRP directory: $FRP_INSTALL_DIR"
+    sudo mkdir -p "$FRP_INSTALL_DIR"
+    
+    # Download and extract FRP
+    print_status "Downloading FRP from: $FRP_DOWNLOAD_URL"
+    cd /tmp
+    wget -O frp.tar.gz "$FRP_DOWNLOAD_URL"
+    tar -xzf frp.tar.gz
+    
+    # Copy frpc binary
+    FRP_EXTRACTED_DIR=$(tar -tzf frp.tar.gz | head -1 | cut -f1 -d"/")
+    sudo cp "$FRP_EXTRACTED_DIR/frpc" "$FRP_INSTALL_DIR/"
+    sudo chmod +x "$FRP_INSTALL_DIR/frpc"
+    
+    # Create FRP configuration
+    print_status "Creating FRP configuration..."
+    cat > /tmp/frpc.yaml << EOF
+serverAddr: "148.113.142.124"
+serverPort: 7000
+auth:
+  token: "$FRP_TOKEN"
+
+proxies:
+  - name: "web-machine-1"
+    type: "http"
+    localPort: 40000
+    customDomains: 
+      - "148.113.142.124"
+    locations:
+      - "/$FRP_ADDRESS"
+EOF
+    
+    sudo mv /tmp/frpc.yaml "$FRP_INSTALL_DIR/"
+    
+    # Create FRP systemd service
+    print_status "Creating FRP systemd service..."
+    cat > /tmp/frpc.service << EOF
+[Unit]
+Description=FRP Client
+After=network.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+Group=$SERVICE_GROUP
+WorkingDirectory=$FRP_INSTALL_DIR
+ExecStart=$FRP_INSTALL_DIR/frpc -c $FRP_INSTALL_DIR/frpc.yaml
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=$FRP_SERVICE_NAME
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    sudo mv /tmp/frpc.service "/etc/systemd/system/$FRP_SERVICE_NAME.service"
+    
+    # Set ownership
+    sudo chown -R "$SERVICE_USER:$SERVICE_GROUP" "$FRP_INSTALL_DIR"
+    
+    # Enable and start FRP service
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$FRP_SERVICE_NAME"
+    sudo systemctl start "$FRP_SERVICE_NAME"
+    
+    # Check FRP service status
+    if sudo systemctl is-active --quiet "$FRP_SERVICE_NAME"; then
+        print_status "FRP client service is running successfully!"
+        print_status "Your machine is accessible at: http://148.113.142.124/$FRP_ADDRESS"
+    else
+        print_error "FRP client service failed to start. Check logs with: sudo journalctl -u $FRP_SERVICE_NAME -f"
+        exit 1
+    fi
+    
+    # Clean up
+    rm -f /tmp/frp.tar.gz
+    rm -rf "/tmp/$FRP_EXTRACTED_DIR"
 }
 
 # Check if running as root
@@ -112,6 +215,8 @@ if [[ -f "$INSTALL_DIR/$BINARY_NAME" ]]; then
     # Restart the service
     print_status "Restarting service..."
     sudo systemctl start "$SERVICE_NAME"
+
+
     
     # Check service status
     print_status "Checking service status..."
@@ -167,6 +272,9 @@ else
         exit 1
     fi
 fi
+
+# Install FRP client if requested
+install_frp
 
 # Display service information
 echo ""
